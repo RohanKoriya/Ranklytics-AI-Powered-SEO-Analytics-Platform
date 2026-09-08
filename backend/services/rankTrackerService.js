@@ -5,6 +5,50 @@ const bb = new Browserbase({
   apiKey: process.env.BROWSERBASE_API_KEY,
 });
 
+function normalizeDomain(value) {
+  try {
+    const hostname = new URL(
+      /^https?:\/\//i.test(value) ? value : `https://${value}`
+    ).hostname;
+    return hostname.replace(/^www\./i, "").toLowerCase();
+  } catch {
+    return value.replace(/^www\./i, "").toLowerCase();
+  }
+}
+
+async function resolveResultUrl(context, href) {
+  try {
+    const url = new URL(href);
+    const redirectedUrl = url.searchParams.get("q") || url.searchParams.get("url");
+
+    if (redirectedUrl && /^https?:\/\//i.test(redirectedUrl)) {
+      return redirectedUrl;
+    }
+
+    if (!url.hostname.endsWith("google.com")) {
+      return /^https?:$/i.test(url.protocol) ? url.href : null;
+    }
+
+    const redirectPage = await context.newPage();
+    try {
+      await redirectPage.goto(url.href, {
+        waitUntil: "commit",
+        timeout: 10000,
+      });
+      const resolvedUrl = new URL(redirectPage.url());
+      return resolvedUrl.hostname.endsWith("google.com")
+        ? null
+        : /^https?:$/i.test(resolvedUrl.protocol)
+          ? resolvedUrl.href
+          : null;
+    } finally {
+      await redirectPage.close().catch(() => { });
+    }
+  } catch {
+    return null;
+  }
+}
+
 // Search Google for keyword and track ranking
 export async function rankTracker(keyword, targetDomain) {
   let browser;
@@ -48,9 +92,12 @@ export async function rankTracker(keyword, targetDomain) {
 
     let allResults = [];
 
-    const cleanTarget = targetDomain
-      .replace("www.", "")
-      .toLowerCase();
+    const cleanTarget = normalizeDomain(targetDomain);
+
+    const isTargetDomain = (domain) => {
+      const cleanDomain = normalizeDomain(domain);
+      return cleanDomain === cleanTarget || cleanDomain.endsWith(`.${cleanTarget}`);
+    };
 
     // Search through first 5 Google pages
     for (let gPage = 0; gPage < 5; gPage++) {
@@ -59,7 +106,9 @@ export async function rankTracker(keyword, targetDomain) {
       )}&start=${gPage * 10}&num=10&hl=en&gl=us`;
 
       await page.goto(searchUrl, {
-        waitUntil: "networkidle",
+        // Google keeps analytics and streaming requests open, so networkidle
+        // can time out even when the result page is ready to scrape.
+        waitUntil: "domcontentloaded",
       });
 
       let pageResults = [];
@@ -101,12 +150,7 @@ export async function rankTracker(keyword, targetDomain) {
                   }
                 }
 
-                // Skip invalid links
-                if (
-                  !a ||
-                  !a.href.startsWith("http") ||
-                  a.href.includes("google.")
-                ) {
+                if (!a) {
                   return null;
                 }
 
@@ -144,11 +188,7 @@ export async function rankTracker(keyword, targetDomain) {
                 }
 
                 return {
-                  url: a.href,
-                  domain: new URL(a.href).hostname.replace(
-                    "www.",
-                    ""
-                  ),
+                  href: a.href,
                   title: h3.innerText.trim(),
                   snippet,
                 };
@@ -156,18 +196,32 @@ export async function rankTracker(keyword, targetDomain) {
               .filter(Boolean);
           });
 
+          pageResults = (await Promise.all(
+            pageResults.map(async (result) => {
+              const resultUrl = await resolveResultUrl(defaultContext, result.href);
+              if (!resultUrl) return null;
+
+              return {
+                url: resultUrl,
+                domain: normalizeDomain(resultUrl),
+                title: result.title,
+                snippet: result.snippet,
+              };
+            })
+          )).filter(Boolean);
+
           if (pageResults.length > 0) {
             break;
           }
 
           await page.reload({
-            waitUntil: "networkidle",
+            waitUntil: "domcontentloaded",
           });
         } catch (error) {
           if (retry === 2) break;
 
           await page.reload({
-            waitUntil: "networkidle",
+            waitUntil: "domcontentloaded",
           });
         }
       }
@@ -186,10 +240,7 @@ export async function rankTracker(keyword, targetDomain) {
         // Check if target found
         if (
           !found &&
-          (r.domain.toLowerCase().includes(cleanTarget) ||
-            cleanTarget.includes(
-              r.domain.toLowerCase()
-            ))
+          isTargetDomain(r.domain)
         ) {
           found = {
             ...r,
@@ -214,12 +265,7 @@ export async function rankTracker(keyword, targetDomain) {
     const competitors = allResults
       .filter(
         (r) =>
-          !r.domain
-            .toLowerCase()
-            .includes(cleanTarget) &&
-          !cleanTarget.includes(
-            r.domain.toLowerCase()
-          )
+          !isTargetDomain(r.domain)
       )
       .slice(0, 10);
 

@@ -65,7 +65,7 @@ const keywordTrackingSchema = new mongoose.Schema({
   },
   domain: {
     type: String,
-    require: true,
+    required: true,
   },
   currentPosition: {
     type: Number,
@@ -87,7 +87,7 @@ const keywordTrackingSchema = new mongoose.Schema({
   competitors: [competitorSchema],
   active: {
     type: Boolean,
-    default: null
+    default: true
   },
   lastChecked: {
     type: Date,

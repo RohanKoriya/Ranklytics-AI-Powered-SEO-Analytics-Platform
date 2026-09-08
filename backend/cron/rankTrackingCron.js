@@ -6,7 +6,8 @@ export function startRankTrackingCron() {
   cron.schedule("0 6 * * *", async () => {
     console.log("Starting daily rank tracking ... ");
     try {
-      const activeTrackings = await KeywordTracking.find({ active: true })
+      // Include records created before the active field default was corrected.
+      const activeTrackings = await KeywordTracking.find({ active: { $ne: false } })
       for (const tracking of activeTrackings) {
         tracking.status = "checking";
         await tracking.save()

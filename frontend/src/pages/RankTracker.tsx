@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
   Target,
@@ -60,6 +60,30 @@ export default function RankTracker() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("newest");
+  const pollingIntervals = useRef(new Set<ReturnType<typeof setInterval>>());
+
+  const pollForCompletion = (id: string) => {
+    let attempts = 0;
+    const pollInterval = setInterval(async () => {
+      attempts += 1;
+      try {
+        const check = await api.get(`/api/rank/${id}`);
+        if (check.data.tracking.status !== "checking" || attempts >= 40) {
+          clearInterval(pollInterval);
+          pollingIntervals.current.delete(pollInterval);
+          setKeywords((prev) =>
+            prev.map((k) => (k._id === id ? check.data.tracking : k)),
+          );
+          setRefreshing((current) => (current === id ? null : current));
+        }
+      } catch (error) {
+        console.error("Rank polling error:", error);
+      }
+    }, 3000);
+    pollingIntervals.current.add(pollInterval);
+
+    return () => clearInterval(pollInterval);
+  };
 
   const fetchKeywords = async () => {
     try {
@@ -90,21 +114,8 @@ export default function RankTracker() {
         setNewUrl("");
         setShowAddModal(false);
 
-        //poll for completion
         const id = res.data.tracking._id;
-        const pollInterval = setInterval(async () => {
-          try {
-            const check = await api.get(`/api/rank/${id}`);
-            if (check.data.tracking.status !== "checking") {
-              clearInterval(pollInterval);
-              setKeywords((prev) =>
-                prev.map((k) => (k._id === id ? check.data.tracking : k)),
-              );
-            }
-          } catch (error) {
-            console.error(error);
-          }
-        }, 3000);
+        pollForCompletion(id);
       }
     } catch (err: any) {
       setAddError(err.response?.data?.message || "Failed to add keyword");
@@ -121,21 +132,7 @@ export default function RankTracker() {
         prev.map((k) => (k._id === id ? { ...k, status: "checking" } : k)),
       );
 
-      // Poll for completion
-      const pollInterval = setInterval(async () => {
-        try {
-          const check = await api.get(`/api/rank/${id}`);
-          if (check.data.tracking.status !== "checking") {
-            clearInterval(pollInterval);
-            setKeywords((prev) =>
-              prev.map((k) => (k._id === id ? check.data.tracking : k)),
-            );
-            setRefreshing(null);
-          }
-        } catch (error) {
-          console.error(error);
-        }
-      }, 3000);
+      pollForCompletion(id);
     } catch (error) {
       console.error("Refresh error: ", error);
       setRefreshing(null);
@@ -250,10 +247,14 @@ export default function RankTracker() {
 
   useEffect(() => {
     (async () => await fetchKeywords())();
+    return () => {
+      pollingIntervals.current.forEach((interval) => clearInterval(interval));
+      pollingIntervals.current.clear();
+    };
   }, []);
 
   return (
-    <div className="min-h-scree pt-16 md:pt-24 bg-background">
+    <div className="min-h-screen pt-16 md:pt-24 bg-background">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">

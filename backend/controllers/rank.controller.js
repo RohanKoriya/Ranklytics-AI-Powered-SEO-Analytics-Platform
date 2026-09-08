@@ -16,7 +16,7 @@ export const addKeyword = async (req, res) => {
     let normalizedUrl;
     let domain;
     try {
-      normalizedUrl = url.startsWith("http") ? url : `https://${url}`;
+      normalizedUrl = /^https?:\/\//i.test(url) ? url : `https://${url}`;
 
       const urlObj = new URL(normalizedUrl);
 
@@ -47,7 +47,8 @@ export const addKeyword = async (req, res) => {
       keyword: keyword.toLowerCase().trim(),
       url: normalizedUrl,
       domain,
-      status: "checking"
+      status: "checking",
+      active: true,
     })
 
     keywordTracking(tracking).catch((err) => {
@@ -109,6 +110,9 @@ export const refreshKeyword = async (req, res) => {
     if (!tracking) return res.status(404).json({
       success: false, message: "Keyword tracking not found"
     });
+    if (tracking.status === "checking") return res.status(409).json({
+      success: false, message: "A rank check is already in progress"
+    });
     tracking.status = "checking";
     await tracking.save();
     res.json({ success: true, message: "Rank check started" });
@@ -126,7 +130,10 @@ export const refreshKeyword = async (req, res) => {
 
 export const deleteKeyword = async (req, res) => {
   try {
-    const tracking = await KeywordTracking.findByIdAndDelete({ _id: req.params.id, userId: req.userId });
+    const tracking = await KeywordTracking.findOneAndDelete({
+      _id: req.params.id,
+      userId: req.userId,
+    });
     if (!tracking) return res.status(404).json({
       success: false, message: "Keyword tracking not found"
     });

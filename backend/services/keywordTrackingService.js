@@ -26,8 +26,10 @@ export async function keywordTracking(tracking) {
       }
     }
 
-    // Successful tracking
-    if (result?.success) {
+    const hasResults = result?.success && result.data.totalResultsScanned > 0;
+
+    // Only persist a completed check when Google returned extractable results.
+    if (hasResults) {
       const previousPosition =
         tracking.currentPosition;
 
@@ -47,7 +49,9 @@ export async function keywordTracking(tracking) {
       tracking.status = "completed";
 
       // Position change calculation
-      tracking.positionChange = previousPosition && result.data.position ? previousPosition - result.data.position : 0;
+      tracking.positionChange = previousPosition !== null && previousPosition !== undefined && result.data.position !== null && result.data.position !== undefined
+        ? previousPosition - result.data.position
+        : 0;
 
       // Best position update
       if (
